@@ -3,7 +3,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/mystery5639/java-ddd-example.git'
+                git branch: 'master', url: 'https://github.com/mystery5639/java-ddd-example.git'
             }
         }
         stage('Build') {
