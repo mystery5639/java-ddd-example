@@ -1,82 +1,115 @@
 pipeline {
-    agent any
-
+    agent {
+        label 'ubuntu-latest'
+    }
+    
+    options {
+        timeout(time: 20, unit: 'MINUTES')
+    }
+    
     environment {
+        // New environment variables you requested
         JAVA_HOME = 'C:\\Program Files\\Java\\jdk-21'
         PATH = "${JAVA_HOME}\\bin;${env.PATH}"
         COMPOSE_FILE = 'docker-compose.ci.yml'
+        
+        // Existing environment variables
+        COMPOSE_DOCKER_CLI_BUILD = '1'
+        DOCKER_BUILDKIT = '1'
     }
-
+    
     stages {
-        stage('Cleanup Previous Containers') {
+        stage('Checkout') {
             steps {
-                bat """
-                    docker-compose -f ${COMPOSE_FILE} down || echo "No containers to remove"
-                    docker rm -f codely-java_ddd_example-mysql codely-java_ddd_example-elasticsearch codely-java_ddd_example-rabbitmq || echo "Containers not found"
-                """
+                checkout scm
             }
         }
-
+        
+        stage('Setup Docker') {
+            steps {
+                sh '''
+                    sudo apt-get update
+                    sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+                    sudo systemctl start docker
+                '''
+            }
+        }
+        
         stage('Start Containers') {
             steps {
-                bat "docker-compose -f ${COMPOSE_FILE} up -d"
+                // Now using COMPOSE_FILE environment variable
+                sh 'docker compose -f $COMPOSE_FILE up -d'
             }
         }
-
+        
         stage('Wait for Services') {
             steps {
-                bat """
-                    :loop_mysql
-                    docker exec codely-java_ddd_example-mysql mysqladmin ping -uroot -p"" --silent
-                    if %errorlevel% neq 0 (
-                        echo Waiting for MySQL...
-                        timeout /t 5 /nobreak > nul
-                        goto loop_mysql
-                    )
+                script {
+                    timeout(time: 3, unit: 'MINUTES') {
+                        waitUntil {
+                            try {
+                                sh 'docker exec codely-java_ddd_example-mysql mysqladmin ping --silent'
+                                return true
+                            } catch (Exception e) {
+                                echo 'Waiting for MySQL...'
+                                sleep 5
+                                return false
+                            }
+                        }
+                    }
                     
-                    :loop_es
-                    curl -s http://localhost:9200/_cluster/health
-                    if %errorlevel% neq 0 (
-                        echo Waiting for Elasticsearch...
-                        timeout /t 5 /nobreak > nul
-                        goto loop_es
-                    )
+                    timeout(time: 2, unit: 'MINUTES') {
+                        waitUntil {
+                            try {
+                                sh 'docker exec codely-java_ddd_example-rabbitmq rabbitmqctl await_startup'
+                                return true
+                            } catch (Exception e) {
+                                echo 'Waiting for RabbitMQ...'
+                                sleep 5
+                                return false
+                            }
+                        }
+                    }
                     
-                    :loop_rabbit
-                    docker exec codely-java_ddd_example-rabbitmq rabbitmqctl await_startup
-                    if %errorlevel% neq 0 (
-                        echo Waiting for RabbitMQ...
-                        timeout /t 5 /nobreak > nul
-                        goto loop_rabbit
-                    )
-                """
+                    timeout(time: 3, unit: 'MINUTES') {
+                        waitUntil {
+                            try {
+                                sh 'curl -s http://localhost:9200/_cluster/health'
+                                return true
+                            } catch (Exception e) {
+                                echo 'Waiting for Elasticsearch...'
+                                sleep 5
+                                return false
+                            }
+                        }
+                    }
+                }
             }
         }
-
-        stage('Build & Test') {
+        
+        stage('Code Formatting Check') {
             steps {
-                bat """
-                    gradlew build test ^
-                    -Dspring.datasource.url=jdbc:mysql://localhost:3306/mooc ^
-                    -Dspring.datasource.username=root ^
-                    -Dspring.datasource.password= ^
-                    -Delasticsearch.host=localhost ^
-                    -Drabbitmq.host=localhost
-                """
+                sh 'docker exec codely-java_ddd_example-test_server ./gradlew spotlessCheck'
             }
         }
-
-        stage('Deploy') {
+        
+        stage('Build Project') {
             steps {
-                powershell 'java -jar build/libs/hello-world-java-V1.jar'
+                sh 'docker exec codely-java_ddd_example-test_server ./gradlew build --warning-mode all'
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                sh 'docker exec codely-java_ddd_example-test_server ./gradlew test --warning-mode all'
             }
         }
     }
-
+    
     post {
         always {
-            bat "docker-compose -f ${COMPOSE_FILE} down"
-            cleanWs()
+            // Using COMPOSE_FILE environment variable here too
+            sh 'docker compose -f $COMPOSE_FILE down'
         }
     }
 }
