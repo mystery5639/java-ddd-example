@@ -4,7 +4,7 @@ pipeline {
     environment {
         // Docker compose file (adjust path if needed)
         COMPOSE_FILE = 'docker-compose.ci.yml'
-        JAVA_HOME = 'C:\Program Files\Java\jdk-21' 
+        JAVA_HOME = 'C:\\Program Files\\Java\\jdk-21' 
         PATH = "${JAVA_HOME}/bin:${env.PATH}:/usr/local/bin"
     }
 
