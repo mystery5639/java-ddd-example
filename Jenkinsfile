@@ -11,8 +11,9 @@ pipeline {
         stage('Cleanup Previous Containers') {
             steps {
                 bat """
-                    docker-compose -f ${COMPOSE_FILE} down || echo "No containers to remove"
-                    docker rm -f codely-java_ddd_example-mysql codely-java_ddd_example-elasticsearch codely-java_ddd_example-rabbitmq || echo "Containers not found"
+                    docker-compose -f ${COMPOSE_FILE} down || echo "No compose containers to remove"
+                    docker rm -f codely-java_ddd_example-mysql codely-java_ddd_example-elasticsearch codely-java_ddd_example-rabbitmq codely-java_ddd_example-test_server || echo "Containers not found"
+                    docker network rm test_default || echo "Network not found"
                 """
             }
         }
