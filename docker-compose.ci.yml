@@ -1,38 +1,36 @@
 services:
-  mysql:
-    image: mysql:8.0
-    networks:
-      - ddd_network
-    environment:
-      MYSQL_ROOT_PASSWORD: ""
-      MYSQL_DATABASE: mooc
-
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
-    networks:
-      - ddd_network
-    environment:
-      - discovery.type=single-node
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health?wait_for_status=green&timeout=60s"]
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    networks:
-      - ddd_network
-    healthcheck:
-      test: ["CMD", "rabbitmqctl", "await_startup"]
-
-  test_container:
-    build: .
-    networks:
-      - ddd_network
-    depends_on:
-      - mysql
-      - elasticsearch
-      - rabbitmq
-
-networks:
-  ddd_network:
-    name: ddd_network
-    driver: bridge
+ 
+mysql:
+     image: mysql:8.0
+     networks:
+       - ddd_network
+     environment:
+       MYSQL_ROOT_PASSWORD: ""
+       MYSQL_DATABASE: mooc
+       elasticsearch:
+       image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+       networks:
+       - ddd_network
+       environment:
+       - discovery.type=single-node
+       healthcheck:
+       test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health?wait_for_status=green&timeout=60s"]
+       rabbitmq:
+       image: rabbitmq:3-management
+       networks:
+       - ddd_network
+     healthcheck:
+test: ["CMD", "rabbitmqctl", "await_startup"]
+ test_container:
+     build: .
+     networks:
+       - ddd_network
+     depends_on:
+ - mysql
+       - elasticsearch
+       - rabbitmq
+ 
+ networks:
+ ddd_network:
+     name: ddd_network
+     driver: bridge
