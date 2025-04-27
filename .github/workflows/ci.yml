@@ -27,14 +27,26 @@ jobs:
           COMPOSE_DOCKER_CLI_BUILD: 1
           DOCKER_BUILDKIT: 1
 
-      - name: ⏳ Wait for services
+      - name: ⏳ Wait for MySQL
         timeout-minutes: 3
         run: |
-          until docker inspect -f '{{.State.Health.Status}}' java_ddd_example-mysql | grep -q "healthy"; do
+          until docker inspect -f '{{.State.Health.Status}}' codely-java_ddd_example-mysql | grep -q "healthy"; do
             echo "Waiting for MySQL..."
             sleep 5
           done
-          until docker inspect -f '{{.State.Health.Status}}' java_ddd_example-elasticsearch | grep -q "healthy"; do
+
+      - name: ⏳ Wait for RabbitMQ
+        timeout-minutes: 2
+        run: |
+          until docker exec codely-java_ddd_example-rabbitmq rabbitmqctl await_startup; do
+            echo "Waiting for RabbitMQ..."
+            sleep 5
+          done
+
+      - name: ⏳ Wait for Elasticsearch
+        timeout-minutes: 3
+        run: |
+          until curl -s http://localhost:9200/_cluster/health; do
             echo "Waiting for Elasticsearch..."
             sleep 5
           done
