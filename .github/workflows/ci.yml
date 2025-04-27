@@ -1,4 +1,4 @@
-name: Java DDD Example CI
+name: Java DDD Example CI (Docker)
 
 on:
   push:
@@ -7,32 +7,47 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
-
+  build-and-test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: 🛒 Checkout code
+        uses: actions/checkout@v4
 
+      - name: 🐳 Set up Docker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo systemctl start docker
 
-    - name: Set up JDK 21
-      uses: actions/setup-java@v4
-      with:
-        distribution: 'adopt'
-        java-version: '21'
+      - name: 🏗️ Start containers
+        run: docker compose -f docker-compose.ci.yml up -d
+        env:
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          DOCKER_BUILDKIT: 1
 
-    - name: Build with Gradle
-      run: ./gradlew clean build -x test
+      - name: ⏳ Wait for services
+        timeout-minutes: 3
+        run: |
+          until docker inspect -f '{{.State.Health.Status}}' java_ddd_example-mysql | grep -q "healthy"; do
+            echo "Waiting for MySQL..."
+            sleep 5
+          done
+          until docker inspect -f '{{.State.Health.Status}}' java_ddd_example-elasticsearch | grep -q "healthy"; do
+            echo "Waiting for Elasticsearch..."
+            sleep 5
+          done
 
-    - name: Run tests
-      run: ./gradlew test
+      - name: ✨ Code formatting check
+        run: docker exec codely-java_ddd_example-test_server ./gradlew spotlessCheck
 
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-artifacts
-        path: build/libs/**
+      - name: 🏭 Build project
+        run: docker exec codely-java_ddd_example-test_server ./gradlew build --warning-mode all
 
+      - name: 🧪 Run tests
+        run: docker exec codely-java_ddd_example-test_server ./gradlew test --warning-mode all
 
-
+      - name: 🧹 Clean up
+        if: always()
+        run: docker compose -f docker-compose.ci.yml down
