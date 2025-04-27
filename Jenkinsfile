@@ -2,40 +2,65 @@ pipeline {
     agent any
 
     environment {
-        JAVA_HOME = 'C:\\Program Files\\Java\\jdk-21'
-        PATH = "${JAVA_HOME}\\bin;${env.PATH}"
-        COMPOSE_FILE = 'docker-compose.ci.yml'
-        ELASTICSEARCH_HOST = 'host.docker.internal'
-        MYSQL_HOST = 'host.docker.internal'
-        RABBITMQ_HOST = 'host.docker.internal'
+        // 1. Use consistent networking
+        NETWORK_NAME = 'ddd_network'
+        ELASTICSEARCH_URL = 'http://elasticsearch:9200'  // Use Docker service names
+        MYSQL_URL = 'jdbc:mysql://mysql:3306/mooc'
+        RABBITMQ_HOST = 'rabbitmq'
     }
 
     stages {
+        stage('Setup Network') {
+            steps {
+                bat """
+                    docker network create %NETWORK_NAME% || echo "Network already exists"
+                """
+            }
+        }
+
         stage('Start Services') {
             steps {
-                bat "docker-compose -f %COMPOSE_FILE% up -d"
+                // 2. Force rebuild and use custom network
+                bat """
+                    docker-compose -f docker-compose.ci.yml down -v --remove-orphans
+                    docker-compose -f docker-compose.ci.yml build --no-cache
+                    docker-compose -f docker-compose.ci.yml up -d
+                """
             }
         }
 
         stage('Verify Services') {
             steps {
                 script {
-                    // Service-specific verification with detailed logging
-                    verifyService('MySQL', "docker exec codely-java_ddd_example-mysql mysqladmin ping -uroot -p\"\" --silent", 60)
-                    verifyService('Elasticsearch', "curl -s http://%ELASTICSEARCH_HOST%:9200/_cluster/health | find \"green\"", 60)
-                    verifyService('RabbitMQ', "docker exec codely-java_ddd_example-rabbitmq rabbitmqctl await_startup", 30)
+                    // 3. Container-native health checks
+                    def checkService = { cmd, timeout ->
+                        waitUntil(initialRecurrencePeriod: 5000) {
+                            try {
+                                bat(script: cmd, returnStatus: true) == 0
+                            } catch(e) {
+                                echo "Check failed: ${e.message}"
+                                false
+                            }
+                        }
+                    }
+
+                    checkService('docker exec mysql mysqladmin ping -uroot -p"" --silent', 120)
+                    checkService('curl -s http://elasticsearch:9200/_cluster/health | find "green"', 120)
+                    checkService('docker exec rabbitmq rabbitmqctl await_startup', 60)
                 }
             }
         }
 
-        stage('Build & Test') {
+        stage('Run Tests') {
             steps {
+                // 4. Run tests INSIDE the test container
                 bat """
-                    gradlew build test ^
-                    -Dspring.datasource.url=jdbc:mysql://%MYSQL_HOST%:3306/mooc ^
-                    -Dspring.datasource.username=root ^
-                    -Dspring.datasource.password= ^
-                    -Delasticsearch.host=%ELASTICSEARCH_HOST%:9200 ^
+                    docker exec -e "SPRING_PROFILES_ACTIVE=test" \\
+                    test_container ./gradlew test \\
+                    -Dspring.datasource.url=%MYSQL_URL% \\
+                    -Dspring.datasource.username=root \\
+                    -Dspring.datasource.password= \\
+                    -Delasticsearch.host=elasticsearch \\
                     -Drabbitmq.host=%RABBITMQ_HOST%
                 """
             }
@@ -44,46 +69,13 @@ pipeline {
 
     post {
         always {
-            bat "docker-compose -f %COMPOSE_FILE% down -v"
-            cleanWs()
-            archiveArtifacts artifacts: '**/build/reports/tests/test', allowEmptyArchive: true
+            // 5. Capture diagnostics before cleanup
+            bat """
+                docker logs elasticsearch > elasticsearch.log 2>&1 || echo "No ES logs"
+                docker-compose -f docker-compose.ci.yml down -v
+                docker network rm %NETWORK_NAME% || echo "Network removal failed"
+            """
+            archiveArtifacts artifacts: '*.log', allowEmptyArchive: true
         }
     }
-}
-
-// Custom verification method
-def verifyService(String serviceName, String checkCommand, int timeoutSeconds) {
-    def startTime = System.currentTimeMillis()
-    def maxTime = startTime + (timeoutSeconds * 1000)
-    
-    while (System.currentTimeMillis() < maxTime) {
-        try {
-            // Run check command
-            def status = bat(script: checkCommand, returnStatus: true)
-            
-            if (status == 0) {
-                echo "${serviceName} is ready!"
-                return
-            }
-            
-            // Get service logs for debugging
-            if (serviceName == 'MySQL') {
-                bat "docker logs codely-java_ddd_example-mysql --tail 20 || echo \"Could not get ${serviceName} logs\""
-            } else if (serviceName == 'Elasticsearch') {
-                bat "docker logs codely-java_ddd_example-elasticsearch --tail 20 || echo \"Could not get ${serviceName} logs\""
-            } else if (serviceName == 'RabbitMQ') {
-                bat "docker logs codely-java_ddd_example-rabbitmq --tail 20 || echo \"Could not get ${serviceName} logs\""
-            }
-            
-            // Wait before retrying
-            sleep(time: 5, unit: 'SECONDS')
-            echo "Waiting for ${serviceName}... (${(System.currentTimeMillis() - startTime)/1000}s elapsed)"
-            
-        } catch (Exception e) {
-            echo "Error checking ${serviceName}: ${e.getMessage()}"
-            sleep(time: 5, unit: 'SECONDS')
-        }
-    }
-    
-    error("${serviceName} failed to start within ${timeoutSeconds} seconds")
 }
