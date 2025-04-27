@@ -4,22 +4,22 @@ pipeline {
     environment {
         JAVA_HOME = 'C:\\Program Files\\Java\\jdk-21'
         PATH = "${JAVA_HOME}\\bin;${env.PATH}"
-        // Docker configuration
         COMPOSE_FILE = 'docker-compose.ci.yml'
     }
 
     stages {
-        stage('Checkout') {
+        stage('Cleanup Previous Containers') {
             steps {
-                git branch: 'main', 
-                url: 'https://github.com/mystery5639/java-ddd-example.git',
-                credentialsId: 'your-github-credentials' // Add if private repo
+                bat """
+                    docker-compose -f ${COMPOSE_FILE} down || echo "No containers to remove"
+                    docker rm -f codely-java_ddd_example-mysql codely-java_ddd_example-elasticsearch codely-java_ddd_example-rabbitmq || echo "Containers not found"
+                """
             }
         }
 
         stage('Start Containers') {
             steps {
-                bat "docker-compose -f ${COMPOSE_FILE} up -d"  // Fixed command
+                bat "docker-compose -f ${COMPOSE_FILE} up -d"
             }
         }
 
@@ -41,6 +41,14 @@ pipeline {
                         timeout /t 5 /nobreak > nul
                         goto loop_es
                     )
+                    
+                    :loop_rabbit
+                    docker exec codely-java_ddd_example-rabbitmq rabbitmqctl await_startup
+                    if %errorlevel% neq 0 (
+                        echo Waiting for RabbitMQ...
+                        timeout /t 5 /nobreak > nul
+                        goto loop_rabbit
+                    )
                 """
             }
         }
@@ -52,7 +60,8 @@ pipeline {
                     -Dspring.datasource.url=jdbc:mysql://localhost:3306/mooc ^
                     -Dspring.datasource.username=root ^
                     -Dspring.datasource.password= ^
-                    -Delasticsearch.host=localhost
+                    -Delasticsearch.host=localhost ^
+                    -Drabbitmq.host=localhost
                 """
             }
         }
