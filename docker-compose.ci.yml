@@ -4,7 +4,7 @@ services:
     image: mysql:8
     platform: linux/amd64
     ports:
-      - "3307:3306"  # Changed from default 3306 to avoid conflicts
+      - "3306:3306"  # Changed from default 3306 to avoid conflicts
     environment:
       MYSQL_ROOT_PASSWORD: ""
       MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
