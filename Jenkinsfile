@@ -1,6 +1,6 @@
 pipeline {
     agent any
-    evironment {
+    environment {
         // Set JAVA_HOME (adjust path to your Java installation)
         JAVA_HOME = 'C:\\Program Files\\Java\\jdk-21'  // Windows path example
         PATH = "${JAVA_HOME}\\bin;${env.PATH}"
