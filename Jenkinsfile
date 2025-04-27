@@ -1,31 +1,34 @@
 pipeline {
     agent any
-    
-    environment {
-        JAVA_HOME = tool name: 'JDK21', type: 'JDK'  // Updated to JDK21
-        PATH = "${JAVA_HOME}/bin:${env.PATH}"  // Ensure the JDK is added to the PATH
-    }
-
     stages {
         stage('Checkout') {
             steps {
-                echo "Checking out the code"
-                checkout scm
+                git branch: 'master', url: 'https://github.com/wxwwixx/java1.git'
             }
         }
-
         stage('Build') {
-            steps {
-                echo "Running Gradle build"
-                bat './gradlew clean build'  // For Windows agents
-                // Use './gradlew clean build' instead of 'bat' for Linux agents
-            }
+            steps { bat 'gradlew clean build'}
         }
-
         stage('Test') {
-            steps {
-                echo "Running Gradle tests"
-                bat './gradlew test'  // For Windows agents
-                // Use './gradlew test' instead of 'bat' for Linux agents
-            }
+            steps { bat 'gradlew test'}
         }
+        stage('Deploy') {
+            steps { powershell 'java -jar build/libs/hello-world-java-V1.jar'}           
+        }    
+}
+
+post {
+        always {
+            echo 'Cleaning up workspace'
+            deleteDir() // Clean up the workspace after the build
+        }
+        success {
+            echo 'Build succeeded!!!'
+            // You could add notification steps here
+        }
+        failure {
+            echo 'Build failed!'
+            // You could add notification steps here
+        }
+    }
+}
