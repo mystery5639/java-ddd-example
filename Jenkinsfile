@@ -1,11 +1,5 @@
 pipeline {
-    agent {
-        label 'ubuntu-latest'
-    }
-    
-    options {
-        timeout(time: 20, unit: 'MINUTES')
-    }
+    agent any
     
     environment {
         // New environment variables you requested
