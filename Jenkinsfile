@@ -60,14 +60,8 @@ pipeline {
 
         stage('Build & Test') {
             steps {
-                bat """
-                    gradlew build test ^
-                    -Dspring.datasource.url=jdbc:mysql://localhost:3306/mooc ^
-                    -Dspring.datasource.username=root ^
-                    -Dspring.datasource.password= ^
-                    -Delasticsearch.host=localhost:9200 ^  // Added port for Elasticsearch
-                    -Drabbitmq.host=localhost
-                """
+                // Single-line command to avoid line continuation issues
+                bat 'gradlew build test -Dspring.datasource.url=jdbc:mysql://localhost:3306/mooc -Dspring.datasource.username=root -Dspring.datasource.password= -Delasticsearch.host=localhost:9200 -Drabbitmq.host=localhost'
             }
         }
 
