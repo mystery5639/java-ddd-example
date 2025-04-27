@@ -3,7 +3,7 @@ pipeline {
     
     environment {
         // Set JAVA_HOME (adjust path to your Java installation)
-        JAVA_HOME = 'C:\graalvm-jdk-21_windows-x64_bin\graalvm-jdk-21.0.6+8.1'  // Windows path example
+        JAVA_HOME = 'C:\Program Files\Java\jdk-17.0.12'  // Windows path example
         PATH = "${JAVA_HOME}\\bin;${env.PATH}"
     }
 
