@@ -1,5 +1,3 @@
-version: '3'
-
 services:
   shared_mysql:
     container_name: codely-java_ddd_example-mysql
