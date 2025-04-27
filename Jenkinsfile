@@ -2,29 +2,35 @@ pipeline {
     agent any
 
     environment {
-        // 1. Use consistent networking
+        COMPOSE_FILE = 'docker-compose.ci.yml'
         NETWORK_NAME = 'ddd_network'
-        ELASTICSEARCH_URL = 'http://elasticsearch:9200'  // Use Docker service names
-        MYSQL_URL = 'jdbc:mysql://mysql:3306/mooc'
-        RABBITMQ_HOST = 'rabbitmq'
     }
 
     stages {
-        stage('Setup Network') {
+        stage('Prepare Network') {
             steps {
-                bat """
-                    docker network create %NETWORK_NAME% || echo "Network already exists"
-                """
+                script {
+                    // 1. Safely handle existing network
+                    def networkStatus = bat(
+                        script: 'docker network inspect %NETWORK_NAME% > nul 2>&1 && echo EXISTS || echo MISSING',
+                        returnStdout: true
+                    ).trim()
+                    
+                    if (networkStatus == 'EXISTS') {
+                        bat 'docker network rm %NETWORK_NAME%'
+                    }
+                    bat 'docker network create --label com.docker.compose.network=default %NETWORK_NAME%'
+                }
             }
         }
 
         stage('Start Services') {
             steps {
-                // 2. Force rebuild and use custom network
+                // 2. Force clean start with proper network
                 bat """
-                    docker-compose -f docker-compose.ci.yml down -v --remove-orphans
-                    docker-compose -f docker-compose.ci.yml build --no-cache
-                    docker-compose -f docker-compose.ci.yml up -d
+                    docker-compose -f %COMPOSE_FILE% down -v --remove-orphans
+                    docker-compose -f %COMPOSE_FILE% build --no-cache
+                    docker-compose -f %COMPOSE_FILE% up -d
                 """
             }
         }
@@ -32,36 +38,44 @@ pipeline {
         stage('Verify Services') {
             steps {
                 script {
-                    // 3. Container-native health checks
-                    def checkService = { cmd, timeout ->
-                        waitUntil(initialRecurrencePeriod: 5000) {
-                            try {
-                                bat(script: cmd, returnStatus: true) == 0
-                            } catch(e) {
-                                echo "Check failed: ${e.message}"
-                                false
+                    // 3. Container-native checks with retries
+                    def services = [
+                        [name: 'MySQL', cmd: 'docker exec mysql mysqladmin ping -uroot -p"" --silent'],
+                        [name: 'Elasticsearch', cmd: 'curl -s http://elasticsearch:9200/_cluster/health | find "green"'],
+                        [name: 'RabbitMQ', cmd: 'docker exec rabbitmq rabbitmqctl await_startup']
+                    ]
+                    
+                    services.each { svc ->
+                        retry(3) {
+                            timeout(time: 2, unit: 'MINUTES') {
+                                waitUntil {
+                                    try {
+                                        bat(script: svc.cmd, returnStatus: true) == 0
+                                    } catch(e) {
+                                        echo "${svc.name} check failed: ${e.message}"
+                                        bat "docker logs ${svc.name.toLowerCase()} --tail 50"
+                                        sleep 10
+                                        false
+                                    }
+                                }
+                                echo "${svc.name} verified!"
                             }
                         }
                     }
-
-                    checkService('docker exec mysql mysqladmin ping -uroot -p"" --silent', 120)
-                    checkService('curl -s http://elasticsearch:9200/_cluster/health | find "green"', 120)
-                    checkService('docker exec rabbitmq rabbitmqctl await_startup', 60)
                 }
             }
         }
 
         stage('Run Tests') {
             steps {
-                // 4. Run tests INSIDE the test container
                 bat """
                     docker exec -e "SPRING_PROFILES_ACTIVE=test" \\
                     test_container ./gradlew test \\
-                    -Dspring.datasource.url=%MYSQL_URL% \\
+                    -Dspring.datasource.url=jdbc:mysql://mysql:3306/mooc \\
                     -Dspring.datasource.username=root \\
                     -Dspring.datasource.password= \\
                     -Delasticsearch.host=elasticsearch \\
-                    -Drabbitmq.host=%RABBITMQ_HOST%
+                    -Drabbitmq.host=rabbitmq
                 """
             }
         }
@@ -69,13 +83,21 @@ pipeline {
 
     post {
         always {
-            // 5. Capture diagnostics before cleanup
-            bat """
-                docker logs elasticsearch > elasticsearch.log 2>&1 || echo "No ES logs"
-                docker-compose -f docker-compose.ci.yml down -v
-                docker network rm %NETWORK_NAME% || echo "Network removal failed"
-            """
-            archiveArtifacts artifacts: '*.log', allowEmptyArchive: true
+            // 4. Preserve logs even if pipeline fails
+            script {
+                try {
+                    bat """
+                        docker-compose -f %COMPOSE_FILE% logs --no-color > all_logs.txt
+                        docker inspect %NETWORK_NAME% > network_info.json
+                    """
+                    archiveArtifacts artifacts: '*.txt,*.json', allowEmptyArchive: true
+                } finally {
+                    bat """
+                        docker-compose -f %COMPOSE_FILE% down -v
+                        docker network rm %NETWORK_NAME% || echo "Network removal failed"
+                    """
+                }
+            }
         }
     }
 }
