@@ -20,7 +20,7 @@ pipeline {
 
         stage('Start Containers') {
             steps {
-                bat "${DOCKER_COMPOSE} -f ${COMPOSE_FILE} up -d"
+                bat "docker-compose.ci.yml up -d"
             }
         }
 
