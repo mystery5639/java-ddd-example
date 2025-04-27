@@ -4,50 +4,79 @@ services:
     image: mysql:8
     platform: linux/amd64
     ports:
-      - "3307:3306"
+      - "3307:3306"  # Changed from default 3306 to avoid conflicts
     environment:
-      - MYSQL_ROOT_PASSWORD=
-      - MYSQL_ALLOW_EMPTY_PASSWORD=yes
-    entrypoint:
+      MYSQL_ROOT_PASSWORD: ""
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "--silent"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+    entrypoint: |
       sh -c "
-        echo 'CREATE DATABASE IF NOT EXISTS mooc;CREATE DATABASE IF NOT EXISTS backoffice;' > /docker-entrypoint-initdb.d/init.sql;
-        /usr/local/bin/docker-entrypoint.sh --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+        echo 'CREATE DATABASE IF NOT EXISTS mooc;
+              CREATE DATABASE IF NOT EXISTS backoffice;' > /docker-entrypoint-initdb.d/init.sql;
+        exec /usr/local/bin/docker-entrypoint.sh --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
       "
     command: ["--default-authentication-plugin=mysql_native_password"]
 
   shared_rabbitmq:
     container_name: codely-java_ddd_example-rabbitmq
-    image: 'rabbitmq:3.7-management'
+    image: rabbitmq:3.11-management  # Updated to more recent version
     platform: linux/amd64
-    restart: unless-stopped
     ports:
-      - "5630:5672"
-      - "8090:15672"
+      - "5630:5672"  # AMQP port
+      - "8090:15672" # Management UI
     environment:
-      - RABBITMQ_DEFAULT_USER=codely
-      - RABBITMQ_DEFAULT_PASS=c0d3ly
+      RABBITMQ_DEFAULT_USER: "codely"
+      RABBITMQ_DEFAULT_PASS: "c0d3ly"
+    healthcheck:
+      test: ["CMD", "rabbitmqctl", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   backoffice_elasticsearch:
     container_name: codely-java_ddd_example-elasticsearch
-    image: 'elasticsearch:6.8.4'
+    image: elasticsearch:7.17.7  # Updated to compatible version
     platform: linux/amd64
-    restart: unless-stopped
-    ports:
-      - "9300:9300"
-      - "9200:9200"
     environment:
-      - discovery.type=single-node
+      discovery.type: "single-node"
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms1g -Xmx1g"  # Set heap size
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    ports:
+      - "9200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 20s
+      retries: 10
 
   test_server_java:
     container_name: codely-java_ddd_example-test_server
     build:
       context: .
       dockerfile: Dockerfile
-    restart: unless-stopped
+    depends_on:
+      shared_mysql:
+        condition: service_healthy
+      shared_rabbitmq:
+        condition: service_healthy
+      backoffice_elasticsearch:
+        condition: service_healthy
     volumes:
       - .:/app:delegated
-    depends_on:
-      - shared_mysql
-      - shared_rabbitmq
-      - backoffice_elasticsearch
+    environment:
+      DB_URL: "jdbc:mysql://shared_mysql:3306/mooc"
+      ES_HOST: "backoffice_elasticsearch"
     tty: true
+
+networks:
+  default:
+    name: ddd_network
+    driver: bridge
